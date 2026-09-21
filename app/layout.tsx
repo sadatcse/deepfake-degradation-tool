@@ -5,6 +5,9 @@ export const metadata: Metadata = {
   title: 'DeepFake Bulk Video Degradation Tool',
   description:
     'Local bulk video degradation for deepfake detection research. Runs entirely on this machine - no database, no cloud, no upload.',
+  icons: {
+    icon: '/icon.png',
+  },
 };
 
 export const viewport: Viewport = {

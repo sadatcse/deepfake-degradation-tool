@@ -91,7 +91,20 @@ FFPROBE_PATH=C:\tools\ffmpeg\bin\ffprobe.exe
 
 ---
 
-## Install
+## Quick Start (Desktop App - 1-Click)
+
+### 1-Click Install (Windows)
+Double-click `install-desktop.bat`.
+It automatically checks Node.js & FFmpeg, installs packages, compiles the app, and places a **"DeepFake Video Degradation Tool"** shortcut directly on your Windows Desktop with its custom application icon.
+
+### 1-Click Launch
+- Double-click the **"DeepFake Video Degradation Tool"** icon on your Desktop.
+- Or double-click `start-desktop.vbs` (starts quietly in the background without a persistent black console window).
+- Or run `npm run desktop` in terminal.
+
+---
+
+## Manual Install & Web Mode
 
 ```bash
 npm install
@@ -99,7 +112,7 @@ npm install
 
 ---
 
-## Run
+## Run (Browser Mode)
 
 ```bash
 npm run dev
@@ -107,7 +120,7 @@ npm run dev
 
 Then open <http://localhost:4321>.
 
-For a production build:
+For production CLI mode:
 
 ```bash
 npm run build

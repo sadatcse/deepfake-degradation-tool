@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "description": "Local bulk video degradation tool for deepfake detection research. No database, no cloud.",
+  "main": "electron/main.cjs",
   "engines": {
     "node": ">=20.11.0"
   },
@@ -10,9 +11,13 @@
     "dev": "next dev -p 4321",
     "build": "next build",
     "start": "next start -p 4321",
+    "desktop": "electron .",
+    "desktop:dev": "electron . --dev",
+    "desktop:start": "electron .",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/*.test.ts"
+    "test": "tsx --test tests/*.test.ts",
+    "dist": "electron-builder"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -42,8 +47,38 @@
     "@types/node": "^24.10.1",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "electron": "^44.4.3",
+    "electron-builder": "^26.15.3",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.13",
     "typescript": "^5.9.3"
+  },
+  "build": {
+    "appId": "com.deepfake.degradation.tool",
+    "productName": "DeepFake Video Degradation Tool",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "assets/**/*",
+      "public/**/*",
+      ".next/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "DeepFake Video Degradation Tool"
+    }
   }
 }
