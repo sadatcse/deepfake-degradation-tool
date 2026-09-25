@@ -4,6 +4,7 @@ import {
   Activity,
   Ban,
   Download,
+  Flame,
   Pause,
   Play,
   RefreshCcw,
@@ -25,6 +26,7 @@ interface Props {
   onCancel: () => void;
   onRetryFailed: () => void;
   onExport: () => void;
+  onSkipThermalRest?: () => void;
 }
 
 const STATUS_VARIANT: Record<string, 'default' | 'success' | 'warning' | 'destructive' | 'muted'> = {
@@ -45,6 +47,7 @@ export function ProgressPanel({
   onCancel,
   onRetryFailed,
   onExport,
+  onSkipThermalRest,
 }: Props) {
   const { counts } = snapshot;
   const finished = counts.completed + counts.failed + counts.skipped + counts.cancelled;
@@ -59,9 +62,16 @@ export function ProgressPanel({
           <CardTitle className="flex items-center gap-2">
             <Activity className="size-4 text-muted-foreground" />
             Progress
-            <Badge variant={STATUS_VARIANT[snapshot.status] ?? 'muted'} className="uppercase">
-              {snapshot.status}
-            </Badge>
+            {snapshot.thermalRest?.isResting ? (
+              <Badge variant="warning" className="uppercase flex items-center gap-1">
+                <Flame className="size-3 text-amber-500 animate-pulse" />
+                Resting (Cooldown)
+              </Badge>
+            ) : (
+              <Badge variant={STATUS_VARIANT[snapshot.status] ?? 'muted'} className="uppercase">
+                {snapshot.status}
+              </Badge>
+            )}
           </CardTitle>
           <CardDescription className="font-mono text-xs">job {snapshot.id}</CardDescription>
         </div>
@@ -99,6 +109,46 @@ export function ProgressPanel({
       </CardHeader>
 
       <CardContent className="space-y-5">
+        {snapshot.thermalRest?.isResting ? (
+          <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <Flame className="size-5 text-amber-400 shrink-0 mt-0.5 animate-pulse" />
+                <div>
+                  <h4 className="font-semibold text-sm text-foreground">
+                    CPU Thermal Protection Active (30-Minute Rest Cooldown)
+                  </h4>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    CPU temperature reached {snapshot.thermalRest.triggerTemp}&deg;C (exceeded {snapshot.thermalRest.threshold}&deg;C limit).
+                    Resting to allow the CPU to cool down.
+                    {snapshot.thermalRest.currentTemp !== null ? ` Current CPU temperature: ${snapshot.thermalRest.currentTemp}°C.` : ''}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="text-right">
+                  <span className="font-mono text-base font-bold tabular text-amber-400">
+                    {formatMs(snapshot.thermalRest.remainingMs ?? 0)}
+                  </span>
+                  <p className="text-[11px] text-muted-foreground">remaining cooldown</p>
+                </div>
+                {onSkipThermalRest ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 border-amber-500/50 hover:bg-amber-500/20 text-xs"
+                    onClick={onSkipThermalRest}
+                    disabled={busy}
+                  >
+                    <Play className="size-3.5 mr-1" />
+                    Resume Now
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         <div>
           <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
             <span className="font-mono text-sm text-muted-foreground">

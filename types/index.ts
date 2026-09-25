@@ -159,6 +159,23 @@ export interface JobOptions {
    * under it by name: `<outputRoot>/<datasetName>/blur/...`.
    */
   outputRoot: string | null;
+  /** Pause encoding for cooldown if CPU temperature exceeds threshold (e.g. 80°C). */
+  thermalProtection?: boolean;
+  /** CPU temperature threshold in Celsius to trigger rest (default: 80). */
+  tempThreshold?: number;
+  /** Duration of thermal rest in minutes (default: 30). */
+  cooldownMinutes?: number;
+  /**
+   * Random mode. Instead of every video x every selected degradation x every
+   * level, each video gets `randomSets` outputs, each with one degradation and
+   * one level drawn at random from the selection. 1000 videos x 2 sets = 2000
+   * outputs, written to random/set_1/, random/set_2/, ...
+   */
+  randomMode?: boolean;
+  /** Random outputs per video (one per set). */
+  randomSets?: number;
+  /** Seed for the random draw; the same seed always yields the same plan. */
+  randomSeed?: number;
 }
 
 export interface JobRequest {
@@ -235,6 +252,8 @@ export interface TaskRecord {
   skipReason: string | null;
   /** Source duration, cached so progress can be computed without re-probing. */
   durationSec: number | null;
+  /** Random-mode set number (1-based), null for regular outputs. */
+  randomSet: number | null;
 }
 
 export type JobStatus =
@@ -282,6 +301,17 @@ export interface JobSnapshot {
   /** Estimate in milliseconds, null until enough samples exist. */
   etaMs: number | null;
   datasets: Array<{ root: string; name: string; total: number; done: number }>;
+  /** Active thermal cooldown rest state, if resting due to high CPU temp. */
+  thermalRest?: ThermalRestState | null;
+}
+
+export interface ThermalRestState {
+  isResting: boolean;
+  triggerTemp: number | null;
+  currentTemp: number | null;
+  threshold: number;
+  restUntil: string | null;
+  remainingMs: number | null;
 }
 
 export interface LogEntry {
@@ -344,6 +374,8 @@ export interface SystemInfo {
   totalMemoryBytes: number;
   allowedRoots: string[] | null;
   instructions: string[];
+  isDesktop?: boolean;
+  cpuTemp?: number | null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -408,6 +440,8 @@ export interface MetadataRecord {
   codec: string | null;
   split: string | null;
   error: string | null;
+  /** Random-mode set number (1-based); absent/null for regular outputs. */
+  randomSet?: number | null;
 }
 
 export interface Manifest {
@@ -423,8 +457,24 @@ export interface Manifest {
   severities: string[];
   options: JobOptions;
   counts: JobCounts;
+  /** Absolute folder every `output` path is relative to. */
+  outputRoot: string;
   files: Array<{
     source: string;
-    outputs: Array<{ output: string; degradation: OutputKind; level: string }>;
+    /** Absolute path of the original video. */
+    sourcePath: string;
+    /** file:// URL of the original video. */
+    sourceUrl: string;
+    outputs: Array<{
+      output: string;
+      /** Absolute path of the degraded video. */
+      outputPath: string;
+      /** file:// URL of the degraded video. */
+      outputUrl: string;
+      degradation: OutputKind;
+      severity: Severity | null;
+      level: string;
+      randomSet: number | null;
+    }>;
   }>;
 }

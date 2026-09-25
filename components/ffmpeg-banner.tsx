@@ -49,6 +49,20 @@ export function FfmpegBanner({ system, onRecheck }: Props) {
         <span className="text-muted-foreground">
           {system.platform} &middot; {system.cpuCount} CPU cores
         </span>
+        {system.cpuTemp !== null && system.cpuTemp !== undefined ? (
+          <Badge
+            variant={system.cpuTemp >= 80 ? 'destructive' : 'secondary'}
+            className="font-mono text-[11px]"
+            title={`Current CPU temperature: ${system.cpuTemp}°C`}
+          >
+            CPU {system.cpuTemp}&deg;C
+          </Badge>
+        ) : null}
+        {system.isDesktop ? (
+          <Badge variant="outline" className="border-blue-500/40 text-blue-400 text-[11px]">
+            Desktop App
+          </Badge>
+        ) : null}
         <Button
           variant="ghost"
           size="sm"

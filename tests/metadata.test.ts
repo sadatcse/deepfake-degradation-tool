@@ -13,7 +13,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type { MetadataRecord } from '@/types';
-import { mergeMetadata, readMetadataIndex } from '@/services/metadata.service';
+import { mergeMetadata, readMetadataIndex, writeManifest } from '@/services/metadata.service';
 
 function record(partial: Partial<MetadataRecord> & Pick<MetadataRecord, 'output'>): MetadataRecord {
   return {
@@ -160,5 +160,43 @@ test('a corrupt metadata.json does not stop a run', async () => {
     assert.equal(merged.length, 1, 'the run continues and rebuilds the file');
   } finally {
     await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('manifest lists absolute paths and file URLs for sources and outputs', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'manifest-'));
+  try {
+    const source = path.join(dir, 'in', 'v1.mp4');
+    const target = await writeManifest(dir, {
+      inputFolder: path.join(dir, 'in'),
+      datasetName: 'in',
+      totalVideos: 1,
+      degradations: ['blur'],
+      severities: ['medium'],
+      options: {} as never,
+      counts: { total: 1, pending: 0, running: 0, completed: 1, failed: 0, skipped: 0, cancelled: 0 },
+      records: [
+        record({
+          output: 'random/set_1/v1_blur_medium.mp4',
+          sourceAbsolute: source,
+          randomSet: 1,
+        }),
+      ],
+    });
+    const manifest = JSON.parse(await fs.readFile(target, 'utf8'));
+    const file = manifest.files[0];
+    const out = file.outputs[0];
+    const expected = path.join(dir, 'random', 'set_1', 'v1_blur_medium.mp4');
+
+    assert.equal(manifest.outputRoot, path.resolve(dir));
+    assert.equal(file.sourcePath, source);
+    assert.ok(file.sourceUrl.startsWith('file:///'));
+    assert.equal(out.outputPath, expected);
+    assert.ok(out.outputUrl.startsWith('file:///'));
+    assert.ok(out.outputUrl.endsWith('/random/set_1/v1_blur_medium.mp4'));
+    assert.equal(out.randomSet, 1);
+    assert.equal(out.severity, 'medium');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
   }
 });

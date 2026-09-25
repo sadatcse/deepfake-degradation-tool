@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ArrowDown, ArrowUp, RotateCcw, SlidersHorizontal, Sparkles } from 'lucide-react';
+import { ArrowDown, ArrowUp, Dices, RotateCcw, SlidersHorizontal, Sparkles } from 'lucide-react';
 import type { DegradationId, Severity } from '@/types';
 import { SEVERITIES } from '@/types';
 import { DEGRADATIONS, getDegradation } from '@/lib/degradations';
@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
@@ -21,6 +22,9 @@ interface Props {
   customised: DegradationId[];
   includeCombined: boolean;
   combinedOrder: DegradationId[];
+  randomMode: boolean;
+  randomSets: number;
+  randomSeed: number;
   disabled: boolean;
   onToggleDegradation: (id: DegradationId) => void;
   onToggleTier: (tier: Severity) => void;
@@ -28,6 +32,7 @@ interface Props {
   onResetLevels: (id: DegradationId) => void;
   onToggleCombined: (value: boolean) => void;
   onMoveInOrder: (id: DegradationId, direction: -1 | 1) => void;
+  onChangeRandom: (patch: { randomMode?: boolean; randomSets?: number; randomSeed?: number }) => void;
 }
 
 /**
@@ -45,6 +50,9 @@ export function DegradationPanel({
   customised,
   includeCombined,
   combinedOrder,
+  randomMode,
+  randomSets,
+  randomSeed,
   disabled,
   onToggleDegradation,
   onToggleTier,
@@ -52,6 +60,7 @@ export function DegradationPanel({
   onResetLevels,
   onToggleCombined,
   onMoveInOrder,
+  onChangeRandom,
 }: Props) {
   const [expanded, setExpanded] = useState<DegradationId | null>(null);
 
@@ -90,7 +99,9 @@ export function DegradationPanel({
             <span className="self-center text-xs text-muted-foreground">
               {tiers.length === 0
                 ? 'Select at least one tier'
-                : `${tiers.length} tier${tiers.length === 1 ? '' : 's'} - each selected degradation runs once per tier`}
+                : randomMode
+                  ? `${tiers.length} tier${tiers.length === 1 ? '' : 's'} - each random output draws one of these`
+                  : `${tiers.length} tier${tiers.length === 1 ? '' : 's'} - each selected degradation runs once per tier`}
             </span>
           </div>
         </div>
@@ -232,71 +243,161 @@ export function DegradationPanel({
         <div className="space-y-3">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <Label htmlFor="combined" className="text-sm">
-                Combined degradation
+              <Label htmlFor="random-mode" className="flex items-center gap-1.5 text-sm">
+                <Dices className="size-4 text-muted-foreground" />
+                Random mode
               </Label>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                Chain every selected degradation into one extra output per severity, encoded in a
-                single pass. Needs at least two degradations.
+                Instead of every combination, give each video a set number of outputs, each with one
+                degradation and one severity picked at random from the selection above. Written to
+                random/set_1, random/set_2, ...
               </p>
             </div>
             <Switch
-              id="combined"
-              checked={includeCombined}
-              disabled={disabled || orderedSelection.length < 2}
-              onCheckedChange={onToggleCombined}
+              id="random-mode"
+              checked={randomMode}
+              disabled={disabled}
+              onCheckedChange={(value) => onChangeRandom({ randomMode: value })}
             />
           </div>
 
-          {includeCombined && orderedSelection.length >= 2 ? (
-            <div className="rounded-lg border border-border p-3">
-              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Pipeline order
-              </p>
-              <div className="mb-3 flex flex-wrap items-center gap-1.5 font-mono text-xs">
-                {orderedSelection.map((id, index) => (
-                  <span key={id} className="flex items-center gap-1.5">
-                    {index > 0 ? <span className="text-muted-foreground">-&gt;</span> : null}
-                    <Badge variant="outline">{getDegradation(id).label}</Badge>
-                  </span>
-                ))}
+          {randomMode ? (
+            <div className="grid gap-3 rounded-lg border border-border p-3 sm:grid-cols-2">
+              <div>
+                <Label htmlFor="random-sets" className="text-xs">
+                  Random sets per video
+                </Label>
+                <Input
+                  id="random-sets"
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={randomSets}
+                  disabled={disabled}
+                  onChange={(event) => {
+                    const value = Math.round(Number(event.target.value));
+                    if (Number.isFinite(value)) {
+                      onChangeRandom({ randomSets: Math.min(20, Math.max(1, value)) });
+                    }
+                  }}
+                  className="mt-1"
+                />
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Each video gets {randomSets} degraded output{randomSets === 1 ? '' : 's'}
+                </p>
               </div>
-              <div className="space-y-1">
-                {orderedSelection.map((id, index) => (
-                  <div
-                    key={id}
-                    className="flex items-center gap-2 rounded-md border border-border px-2 py-1"
+              <div>
+                <Label htmlFor="random-seed" className="text-xs">
+                  Seed
+                </Label>
+                <div className="mt-1 flex gap-2">
+                  <Input
+                    id="random-seed"
+                    type="number"
+                    min={0}
+                    value={randomSeed}
+                    disabled={disabled}
+                    onChange={(event) => {
+                      const value = Math.round(Number(event.target.value));
+                      if (Number.isFinite(value) && value >= 0 && value <= 2_147_483_647) {
+                        onChangeRandom({ randomSeed: value });
+                      }
+                    }}
+                  />
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    disabled={disabled}
+                    onClick={() =>
+                      onChangeRandom({ randomSeed: Math.floor(Math.random() * 2_147_483_647) })
+                    }
+                    aria-label="New random seed"
                   >
-                    <span className="w-5 text-center font-mono text-xs text-muted-foreground">
-                      {index + 1}
-                    </span>
-                    <span className="flex-1 text-sm">{getDegradation(id).label}</span>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="size-7"
-                      disabled={disabled || index === 0}
-                      onClick={() => onMoveInOrder(id, -1)}
-                      aria-label="Move earlier in the pipeline"
-                    >
-                      <ArrowUp />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="size-7"
-                      disabled={disabled || index === orderedSelection.length - 1}
-                      onClick={() => onMoveInOrder(id, 1)}
-                      aria-label="Move later in the pipeline"
-                    >
-                      <ArrowDown />
-                    </Button>
-                  </div>
-                ))}
+                    <Dices />
+                  </Button>
+                </div>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Same seed = same picks, so a resumed run stays consistent.
+                </p>
               </div>
             </div>
           ) : null}
         </div>
+
+        {randomMode ? null : (
+          <>
+            <Separator />
+
+            <div className="space-y-3">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <Label htmlFor="combined" className="text-sm">
+                    Combined degradation
+                  </Label>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Chain every selected degradation into one extra output per severity, encoded in a
+                    single pass. Needs at least two degradations.
+                  </p>
+                </div>
+                <Switch
+                  id="combined"
+                  checked={includeCombined}
+                  disabled={disabled || orderedSelection.length < 2}
+                  onCheckedChange={onToggleCombined}
+                />
+              </div>
+
+              {includeCombined && orderedSelection.length >= 2 ? (
+                <div className="rounded-lg border border-border p-3">
+                  <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Pipeline order
+                  </p>
+                  <div className="mb-3 flex flex-wrap items-center gap-1.5 font-mono text-xs">
+                    {orderedSelection.map((id, index) => (
+                      <span key={id} className="flex items-center gap-1.5">
+                        {index > 0 ? <span className="text-muted-foreground">-&gt;</span> : null}
+                        <Badge variant="outline">{getDegradation(id).label}</Badge>
+                      </span>
+                    ))}
+                  </div>
+                  <div className="space-y-1">
+                    {orderedSelection.map((id, index) => (
+                      <div
+                        key={id}
+                        className="flex items-center gap-2 rounded-md border border-border px-2 py-1"
+                      >
+                        <span className="w-5 text-center font-mono text-xs text-muted-foreground">
+                          {index + 1}
+                        </span>
+                        <span className="flex-1 text-sm">{getDegradation(id).label}</span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-7"
+                          disabled={disabled || index === 0}
+                          onClick={() => onMoveInOrder(id, -1)}
+                          aria-label="Move earlier in the pipeline"
+                        >
+                          <ArrowUp />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-7"
+                          disabled={disabled || index === orderedSelection.length - 1}
+                          onClick={() => onMoveInOrder(id, 1)}
+                          aria-label="Move later in the pipeline"
+                        >
+                          <ArrowDown />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </>
+        )}
       </CardContent>
     </Card>
   );

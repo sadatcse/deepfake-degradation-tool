@@ -86,7 +86,9 @@ function startNextServer(port) {
     const env = Object.assign({}, process.env, {
       PORT: String(port),
       NODE_ENV: isDev ? 'development' : 'production',
-      ELECTRON_RUN_AS_NODE: '1'
+      ELECTRON_RUN_AS_NODE: '1',
+      IS_DESKTOP: '1',
+      DESKTOP_APP: 'true'
     });
 
     // Try starting with electron as node or fallback to node
@@ -99,7 +101,11 @@ function startNextServer(port) {
     } catch (err) {
       serverProcess = spawn('node', args, {
         cwd: projectRoot,
-        env: Object.assign({}, process.env, { PORT: String(port) }),
+        env: Object.assign({}, process.env, {
+          PORT: String(port),
+          IS_DESKTOP: '1',
+          DESKTOP_APP: 'true'
+        }),
         stdio: ['ignore', 'pipe', 'pipe']
       });
     }

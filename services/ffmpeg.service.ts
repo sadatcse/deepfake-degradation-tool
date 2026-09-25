@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process';
 import os from 'node:os';
 import type { BinaryInfo, SystemInfo } from '@/types';
 import { getAllowedRoots } from '@/utils/paths';
+import { getCpuTemperature, isDesktopMode } from './thermal.service';
 
 /* -------------------------------------------------------------------------- */
 /* Binary detection                                                           */
@@ -102,9 +103,10 @@ const SETUP_INSTRUCTIONS = [
 export async function getSystemInfo(force = false): Promise<SystemInfo> {
   if (cached && !force) return cached;
 
-  const [ffmpeg, ffprobe] = await Promise.all([
+  const [ffmpeg, ffprobe, cpuTemp] = await Promise.all([
     detect('FFMPEG_PATH', 'ffmpeg'),
     detect('FFPROBE_PATH', 'ffprobe'),
+    getCpuTemperature(force),
   ]);
 
   cached = {
@@ -115,6 +117,8 @@ export async function getSystemInfo(force = false): Promise<SystemInfo> {
     totalMemoryBytes: os.totalmem(),
     allowedRoots: getAllowedRoots(),
     instructions: SETUP_INSTRUCTIONS,
+    isDesktop: isDesktopMode(),
+    cpuTemp,
   };
   return cached;
 }

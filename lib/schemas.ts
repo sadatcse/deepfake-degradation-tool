@@ -43,6 +43,12 @@ export const jobOptionsSchema = z.object({
   includeCombined: z.boolean().default(false),
   // Blank/absent means the default <dataset>/degraded_output.
   outputRoot: pathSchema.nullable().optional().default(null),
+  thermalProtection: z.boolean().default(true),
+  tempThreshold: z.number().int().min(50).max(105).default(80),
+  cooldownMinutes: z.number().int().min(1).max(120).default(30),
+  randomMode: z.boolean().default(false),
+  randomSets: z.number().int().min(1).max(20).default(2),
+  randomSeed: z.number().int().min(0).max(2_147_483_647).default(1),
 });
 
 export const jobRequestSchema = z.object({
@@ -88,7 +94,15 @@ export const previewRequestSchema = z.object({
 });
 
 export const controlSchema = z.object({
-  action: z.enum(['pause', 'resume', 'cancel', 'retry-failed', 'force-reprocess', 'export']),
+  action: z.enum([
+    'pause',
+    'resume',
+    'cancel',
+    'retry-failed',
+    'force-reprocess',
+    'export',
+    'skip-thermal-rest',
+  ]),
 });
 
 export const listRequestSchema = z.object({

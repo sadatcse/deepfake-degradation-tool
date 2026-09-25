@@ -19,6 +19,8 @@ import { Switch } from '@/components/ui/switch';
 interface Props {
   options: JobOptions;
   cpuCount: number;
+  isDesktop?: boolean;
+  cpuTemp?: number | null;
   disabled: boolean;
   /** Where output will actually go, resolved server-side for the first dataset. */
   resolvedOutputRoots: string[];
@@ -30,6 +32,8 @@ interface Props {
 export function SettingsPanel({
   options,
   cpuCount,
+  isDesktop,
+  cpuTemp,
   disabled,
   resolvedOutputRoots,
   onChange,
@@ -217,6 +221,14 @@ export function SettingsPanel({
             checked={options.alwaysIncludeSeverityInName}
             disabled={disabled}
             onChange={(v) => onChange({ alwaysIncludeSeverityInName: v })}
+          />
+          <Toggle
+            id="thermal-protection"
+            label="CPU thermal cooldown (80°C+ -> 30 min rest)"
+            hint={`Continuously monitors CPU temp${cpuTemp !== undefined && cpuTemp !== null ? ` (current: ${cpuTemp}°C)` : ''}. If CPU hits 80°C or higher, processing pauses for 30 minutes rest to allow hardware cooldown, then automatically resumes.`}
+            checked={options.thermalProtection ?? true}
+            disabled={disabled}
+            onChange={(v) => onChange({ thermalProtection: v })}
           />
         </div>
       </CardContent>

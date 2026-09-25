@@ -195,7 +195,8 @@ export type ControlAction =
   | 'cancel'
   | 'retry-failed'
   | 'force-reprocess'
-  | 'export';
+  | 'export'
+  | 'skip-thermal-rest';
 
 export function controlJob(
   id: string,

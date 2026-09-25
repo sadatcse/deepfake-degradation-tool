@@ -26,11 +26,13 @@ import type {
   MetadataRecord,
   TaskRecord,
   TaskStatus,
+  ThermalRestState,
 } from '@/types';
 import { Gate } from '@/utils/concurrency';
 import { PARTIAL_SUFFIX, assertInside, resolveOutputRoot } from '@/utils/paths';
 import { buildEncodeArgs, requireFfmpeg, runFfmpeg, FfmpegError } from './ffmpeg.service';
 import { sha256Cached } from './checksum.service';
+import { getCpuTemperature, isDesktopMode } from './thermal.service';
 import {
   ensureOutputDir,
   mergeMetadata,
@@ -89,6 +91,9 @@ export class Job {
   private snapshotTimer: NodeJS.Timeout | null = null;
   private ranTasks = 0;
   private outputBytes = 0;
+
+  private thermalTimer: NodeJS.Timeout | null = null;
+  private thermalRestState: ThermalRestState | null = null;
 
   constructor(id: string, request: JobRequest, scans: DatasetScan[], plan: PlanResult) {
     this.id = id;
@@ -196,6 +201,7 @@ export class Job {
       elapsedMs,
       etaMs,
       datasets,
+      thermalRest: this.thermalRestState ? { ...this.thermalRestState } : null,
     };
   }
 
@@ -255,19 +261,162 @@ export class Job {
 
   resume(): void {
     if (this.status !== 'paused') return;
+    if (this.thermalRestState?.isResting) {
+      this.log('info', '[Thermal Protection] Cooldown rest manually skipped by user resume.');
+      this.thermalRestState = null;
+    }
     this.status = 'running';
     this.gate.release();
     this.log('info', 'Resumed.');
     this.pushSnapshot(true);
   }
 
+  skipThermalRest(): void {
+    if (!this.thermalRestState?.isResting) return;
+    this.log('info', '[Thermal Protection] Cooldown rest manually skipped.');
+    this.thermalRestState = null;
+    if (this.status === 'paused' && !this.cancelled) {
+      this.status = 'running';
+      this.gate.release();
+      this.pushSnapshot(true);
+    }
+  }
+
   cancel(): void {
     if (this.status === 'completed' || this.status === 'cancelled') return;
     this.cancelled = true;
+    this.stopThermalMonitor();
+    this.thermalRestState = null;
     this.gate.release(); // let paused workers wake up and exit
     for (const controller of this.controllers.values()) controller.abort();
     this.log('warn', 'Cancelling. Active ffmpeg processes are being stopped.');
     this.pushSnapshot(true);
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Thermal Protection                                                     */
+  /* ---------------------------------------------------------------------- */
+
+  private isThermalProtectionEnabled(): boolean {
+    const opts = this.request.options;
+    if (opts.thermalProtection === false) return false;
+    // Enabled explicitly or automatically when running in desktop mode
+    return opts.thermalProtection === true || isDesktopMode();
+  }
+
+  private startThermalMonitor(): void {
+    if (!this.isThermalProtectionEnabled()) return;
+    this.stopThermalMonitor();
+
+    // Check CPU temperature every 5 seconds while job is running or resting
+    this.thermalTimer = setInterval(async () => {
+      await this.checkThermal();
+    }, 5000);
+  }
+
+  private stopThermalMonitor(): void {
+    if (this.thermalTimer) {
+      clearInterval(this.thermalTimer);
+      this.thermalTimer = null;
+    }
+  }
+
+  private async checkThermal(): Promise<void> {
+    if (this.cancelled || (this.status !== 'running' && this.status !== 'paused')) {
+      return;
+    }
+
+    const threshold = this.request.options.tempThreshold ?? 80;
+    const cooldownMin = this.request.options.cooldownMinutes ?? 30;
+    const cooldownMs = cooldownMin * 60 * 1000;
+
+    // If currently resting, update countdown and check for resume
+    if (this.thermalRestState?.isResting) {
+      const currentTemp = await getCpuTemperature();
+      this.thermalRestState.currentTemp = currentTemp;
+
+      const remainingMs = this.thermalRestState.restUntil
+        ? Math.max(0, Date.parse(this.thermalRestState.restUntil) - Date.now())
+        : 0;
+      this.thermalRestState.remainingMs = remainingMs;
+
+      // Has the cooldown rest period finished?
+      if (remainingMs <= 0) {
+        // If CPU is still dangerously hot (>= threshold), extend rest by 5 minutes
+        if (currentTemp !== null && currentTemp >= threshold) {
+          const extensionMs = 5 * 60 * 1000;
+          this.thermalRestState.restUntil = new Date(Date.now() + extensionMs).toISOString();
+          this.thermalRestState.remainingMs = extensionMs;
+          this.log(
+            'warn',
+            `[Thermal Protection] ${cooldownMin}-minute rest completed, but CPU is still hot at ${currentTemp}°C (>= ${threshold}°C). Extending cooldown for 5 minutes.`,
+          );
+          this.pushSnapshot(true);
+          return;
+        }
+
+        // Safe to resume
+        this.resumeFromThermalRest();
+        return;
+      }
+
+      this.pushSnapshot();
+      return;
+    }
+
+    // Normal running state: check if CPU breached temperature threshold
+    if (this.status === 'running') {
+      const temp = await getCpuTemperature();
+      if (temp !== null && temp >= threshold) {
+        this.triggerThermalRest(temp, threshold, cooldownMin, cooldownMs);
+      }
+    }
+  }
+
+  private triggerThermalRest(
+    temp: number,
+    threshold: number,
+    cooldownMin: number,
+    cooldownMs: number,
+  ): void {
+    if (this.thermalRestState?.isResting || this.status !== 'running') return;
+
+    this.gate.close();
+    this.status = 'paused';
+
+    const restUntilDate = new Date(Date.now() + cooldownMs);
+    this.thermalRestState = {
+      isResting: true,
+      triggerTemp: temp,
+      currentTemp: temp,
+      threshold,
+      restUntil: restUntilDate.toISOString(),
+      remainingMs: cooldownMs,
+    };
+
+    this.log(
+      'warn',
+      `[Thermal Protection] CPU temperature reached ${temp}°C (exceeds ${threshold}°C threshold). ` +
+        `Pausing encodes for ${cooldownMin}-minute cooldown rest until ${restUntilDate.toLocaleTimeString()} to cool down hardware.`,
+    );
+
+    this.pushSnapshot(true);
+  }
+
+  private resumeFromThermalRest(): void {
+    if (!this.thermalRestState?.isResting) return;
+    const finalTemp = this.thermalRestState.currentTemp;
+    this.thermalRestState = null;
+
+    if (this.status === 'paused' && !this.cancelled) {
+      this.status = 'running';
+      this.gate.release();
+      this.log(
+        'info',
+        `[Thermal Protection] Cooldown rest completed (CPU: ${finalTemp !== null ? `${finalTemp}°C` : 'cooled'}). Resuming encoding.`,
+      );
+      this.pushSnapshot(true);
+    }
   }
 
   /** Requeue only the failed tasks (spec 24). */
@@ -314,6 +463,7 @@ export class Job {
     this.startedAt ??= new Date().toISOString();
     this.finishedAt = null;
     this.gate.release();
+    this.startThermalMonitor();
 
     try {
       const ffmpegBin = await requireFfmpeg();
@@ -342,6 +492,8 @@ export class Job {
       this.status = 'failed';
       this.log('error', `Job could not start: ${(error as Error).message}`);
     } finally {
+      this.stopThermalMonitor();
+      this.thermalRestState = null;
       this.running = false;
       this.finishedAt = new Date().toISOString();
 
@@ -583,6 +735,7 @@ export class Job {
       codec: task.sourceMeta.codec,
       split: task.sourceMeta.split,
       error: task.error,
+      randomSet: task.randomSet,
     };
 
     const pending = this.pendingRecords.get(task.root) ?? [];

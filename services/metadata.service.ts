@@ -14,6 +14,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type {
   JobCounts,
   JobOptions,
@@ -150,6 +151,9 @@ const CSV_HEADERS = [
   'filter_chain',
   'processed_at',
   'error',
+  'random_set',
+  'source_path',
+  'output_path',
 ] as const;
 
 export async function writeMetadataCsv(
@@ -179,6 +183,9 @@ export async function writeMetadataCsv(
     r.filterChain,
     r.processedAt,
     r.error ?? '',
+    r.randomSet ?? '',
+    r.sourceAbsolute,
+    absoluteOutput(outputRoot, r.output),
   ]);
 
   const target = path.join(outputRoot, METADATA_CSV);
@@ -201,6 +208,11 @@ export interface ManifestInput {
   records: readonly MetadataRecord[];
 }
 
+/** Resolve a record's output (relative, POSIX) to an absolute native path. */
+function absoluteOutput(outputRoot: string, relative: string): string {
+  return path.resolve(outputRoot, ...relative.split('/'));
+}
+
 export async function writeManifest(outputRoot: string, input: ManifestInput): Promise<string> {
   const target = path.join(outputRoot, MANIFEST_FILE);
   const previous = await readJson<Partial<Manifest>>(target, {});
@@ -209,11 +221,21 @@ export async function writeManifest(outputRoot: string, input: ManifestInput): P
   const bySource = new Map<string, Manifest['files'][number]>();
   for (const record of input.records) {
     if (record.status !== 'completed') continue;
-    const entry = bySource.get(record.source) ?? { source: record.source, outputs: [] };
+    const entry = bySource.get(record.source) ?? {
+      source: record.source,
+      sourcePath: record.sourceAbsolute,
+      sourceUrl: pathToFileURL(record.sourceAbsolute).href,
+      outputs: [],
+    };
+    const outputPath = absoluteOutput(outputRoot, record.output);
     entry.outputs.push({
       output: record.output,
+      outputPath,
+      outputUrl: pathToFileURL(outputPath).href,
       degradation: record.degradation,
+      severity: record.severity,
       level: record.level,
+      randomSet: record.randomSet ?? null,
     });
     bySource.set(record.source, entry);
   }
@@ -231,6 +253,7 @@ export async function writeManifest(outputRoot: string, input: ManifestInput): P
     severities: input.severities,
     options: input.options,
     counts: input.counts,
+    outputRoot: path.resolve(outputRoot),
     files: [...bySource.values()].sort((a, b) => a.source.localeCompare(b.source)),
   };
 

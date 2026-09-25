@@ -694,3 +694,73 @@ test('the spec formula reads exactly as documented', () => {
 
   assert.equal(plan.formula, '1000 videos x 3 degradations x 3 severities = 9000 outputs');
 });
+
+/* -------------------------------------------------------------------------- */
+/* Random mode                                                                */
+/* -------------------------------------------------------------------------- */
+
+const ALL_TIERS = ['mild', 'medium', 'severe'];
+const randomRequest = (sets: number, seed = 7): JobRequest => ({
+  roots: ['D:\Dataset-01'],
+  degradations: ['blur', 'noise', 'compression', 'motion_blur', 'brightness'],
+  levels: {
+    blur: ALL_TIERS,
+    noise: ALL_TIERS,
+    compression: ALL_TIERS,
+    motion_blur: ALL_TIERS,
+    brightness: ALL_TIERS,
+  },
+  options: { ...baseOptions, randomMode: true, randomSets: sets, randomSeed: seed },
+});
+
+const manyVideos = (n: number) =>
+  Array.from({ length: n }, (_, i) => {
+    const name = `video${String(i + 1).padStart(3, '0')}`;
+    return video({
+      path: `D:\Dataset-01\${name}.mp4`,
+      relativePath: `${name}.mp4`,
+      fileName: `${name}.mp4`,
+      baseName: name,
+    });
+  });
+
+test('random mode produces videos x sets outputs, one per set folder', () => {
+  const plan = planTasks(randomRequest(3), [scan(manyVideos(100))]);
+
+  assert.equal(plan.tasks.length, 300);
+  assert.match(plan.formula, /100 videos x 3 random sets .* = 300 outputs/);
+  for (const set of [1, 2, 3]) {
+    assert.equal(plan.tasks.filter((t) => t.randomSet === set).length, 100);
+  }
+  const first = plan.tasks[0];
+  assert.equal(first.randomSet, 1);
+  assert.match(
+    first.outputRelative,
+    new RegExp(`^random/set_1/video001_${getDegradationSuffix(first.degradation)}_${first.level}\.mp4$`),
+  );
+});
+
+test('random mode is deterministic per seed and varies across degradations and tiers', () => {
+  const videos = manyVideos(200);
+  const a = planTasks(randomRequest(2, 42), [scan(videos)]);
+  const b = planTasks(randomRequest(2, 42), [scan(videos)]);
+  const c = planTasks(randomRequest(2, 43), [scan(videos)]);
+
+  const key = (p: typeof a) => p.tasks.map((t) => `${t.degradation}/${t.level}`).join(',');
+  assert.equal(key(a), key(b));
+  assert.notEqual(key(a), key(c));
+
+  assert.equal(new Set(a.tasks.map((t) => t.degradation)).size, 5);
+  assert.equal(new Set(a.tasks.map((t) => t.severity)).size, 3);
+
+  // A video never gets the same degradation+level twice while unused pairs remain.
+  for (let i = 0; i < a.tasks.length; i += 2) {
+    const [x, y] = [a.tasks[i], a.tasks[i + 1]];
+    assert.equal(x.sourcePath, y.sourcePath);
+    assert.notEqual(`${x.degradation}/${x.level}`, `${y.degradation}/${y.level}`);
+  }
+});
+
+function getDegradationSuffix(id: string): string {
+  return { blur: 'blur', noise: 'noise', compression: 'compression', motion_blur: 'motionblur', brightness: 'brightness' }[id] ?? id;
+}

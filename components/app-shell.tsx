@@ -43,6 +43,12 @@ const DEFAULT_OPTIONS: JobOptions = {
   combinedOrder: [...DEGRADATION_IDS],
   includeCombined: false,
   outputRoot: null,
+  thermalProtection: true,
+  tempThreshold: 80,
+  cooldownMinutes: 30,
+  randomMode: false,
+  randomSets: 2,
+  randomSeed: 1,
 };
 
 export function AppShell() {
@@ -438,6 +444,9 @@ export function AppShell() {
             customised={Object.keys(customLevels) as DegradationId[]}
             includeCombined={options.includeCombined}
             combinedOrder={options.combinedOrder}
+            randomMode={Boolean(options.randomMode)}
+            randomSets={options.randomSets ?? 2}
+            randomSeed={options.randomSeed ?? 1}
             disabled={configDisabled}
             onToggleDegradation={toggleDegradation}
             onToggleTier={toggleTier}
@@ -455,6 +464,7 @@ export function AppShell() {
               setOptions((previous) => ({ ...previous, includeCombined: value }))
             }
             onMoveInOrder={moveInOrder}
+            onChangeRandom={(patch) => setOptions((previous) => ({ ...previous, ...patch }))}
           />
 
           {previewDataset ? (
@@ -478,6 +488,8 @@ export function AppShell() {
           <SettingsPanel
             options={options}
             cpuCount={system?.cpuCount ?? 1}
+            isDesktop={Boolean(system?.isDesktop)}
+            cpuTemp={system?.cpuTemp ?? null}
             disabled={configDisabled}
             resolvedOutputRoots={estimate?.outputRoots ?? []}
             onChange={(patch) => setOptions((previous) => ({ ...previous, ...patch }))}
@@ -556,6 +568,7 @@ export function AppShell() {
             onCancel={() => void control('cancel')}
             onRetryFailed={() => void control('retry-failed')}
             onExport={() => void control('export')}
+            onSkipThermalRest={() => void control('skip-thermal-rest')}
           />
 
           <div className="grid gap-4 xl:grid-cols-2">

@@ -63,6 +63,7 @@ function makeTask(args: {
   result: ProcessorOutput;
   baseCrf: number;
   preset: string;
+  randomSet?: number | null;
 }): TaskRecord {
   const {
     scan,
@@ -77,6 +78,7 @@ function makeTask(args: {
     result,
     baseCrf,
     preset,
+    randomSet = null,
   } = args;
 
   const fileName = outputFileName(video.baseName, suffix, levelId, includeLevel);
@@ -133,6 +135,7 @@ function makeTask(args: {
       ? `source is unreadable: ${video.probeError}`
       : (result.skip ?? null),
     durationSec: video.durationSec,
+    randomSet,
   };
 }
 
@@ -170,6 +173,67 @@ function stepsForTier(
   return steps;
 }
 
+/** Folder random-mode outputs are written under: random/set_1, random/set_2, ... */
+export const RANDOM_FOLDER = 'random';
+
+/** FNV-1a, so a string (seed + video path) becomes a 32-bit PRNG seed. */
+function hashString(value: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+/** mulberry32 - small, fast, deterministic. Returns floats in [0, 1). */
+function seededRandom(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Pick `count` (degradation, level) pairs for one video.
+ *
+ * The degradation is drawn uniformly first, then one of its selected levels,
+ * so a degradation with four levels is not favoured over one with three. The
+ * draw is seeded by the job seed and the video's path: the estimate, the run
+ * and any later resume all see exactly the same assignment. Pairs are not
+ * repeated for the same video until every pair has been used once.
+ */
+export function randomPicks(
+  degradations: readonly DegradationId[],
+  levels: Record<string, string[]>,
+  count: number,
+  seed: number,
+  key: string,
+): Array<{ id: DegradationId; levelId: string }> {
+  const pool = degradations.filter((id) => (levels[id] ?? []).length > 0);
+  if (pool.length === 0) return [];
+  const total = pool.reduce((sum, id) => sum + levels[id].length, 0);
+
+  const rand = seededRandom(hashString(`${seed}:${key}`));
+  const picks: Array<{ id: DegradationId; levelId: string }> = [];
+  let used = new Set<string>();
+
+  for (let n = 0; n < count; n += 1) {
+    if (used.size >= total) used = new Set();
+    const open = pool.filter((id) => levels[id].some((l) => !used.has(`${id}/${l}`)));
+    const id = open[Math.floor(rand() * open.length)];
+    const free = levels[id].filter((l) => !used.has(`${id}/${l}`));
+    const levelId = free[Math.floor(rand() * free.length)];
+    used.add(`${id}/${levelId}`);
+    picks.push({ id, levelId });
+  }
+  return picks;
+}
+
 export function planTasks(request: JobRequest, scans: readonly DatasetScan[]): PlanResult {
   const { options } = request;
   const tasks: TaskRecord[] = [];
@@ -192,7 +256,12 @@ export function planTasks(request: JobRequest, scans: readonly DatasetScan[]): P
     ),
   );
 
-  const wantCombined = options.includeCombined && orderedDegradations.length >= 2 && tiers.length > 0;
+  const randomMode = options.randomMode === true;
+  const randomSets = Math.max(1, options.randomSets ?? 2);
+  const randomSeed = options.randomSeed ?? 1;
+
+  const wantCombined =
+    !randomMode && options.includeCombined && orderedDegradations.length >= 2 && tiers.length > 0;
 
   for (const scan of scans) {
     const folders = new Set<string>();
@@ -211,6 +280,45 @@ export function planTasks(request: JobRequest, scans: readonly DatasetScan[]): P
         },
         baseCrf: options.baseCrf,
       };
+
+      if (randomMode) {
+        const picks = randomPicks(
+          orderedDegradations,
+          request.levels,
+          randomSets,
+          randomSeed,
+          video.relativePath,
+        );
+        picks.forEach(({ id, levelId }, index) => {
+          const set = index + 1;
+          const definition = getDegradation(id);
+          const level = getLevel(id, levelId);
+          const folder = `${RANDOM_FOLDER}/set_${set}`;
+          tasks.push(
+            makeTask({
+              scan,
+              video,
+              kind: id,
+              levelId,
+              levelLabel: level.label,
+              severity: level.tier,
+              outputRoot: outRoot,
+              folder,
+              suffix: definition.suffix,
+              // Sets mix severities, so the level is always in the name.
+              includeLevel: true,
+              result: getProcessor(id)(level, ctx),
+              baseCrf: options.baseCrf,
+              preset: options.encoderPreset,
+              randomSet: set,
+            }),
+          );
+          folders.add(folder);
+          levelIdsSeen.add(levelId);
+          kindsUsed.add(id);
+        });
+        continue;
+      }
 
       for (const id of orderedDegradations) {
         const levelIds = request.levels[id] ?? [];
@@ -297,7 +405,13 @@ export function planTasks(request: JobRequest, scans: readonly DatasetScan[]): P
     levelCounts.length > 0 && levelCounts.every((n) => n === levelCounts[0]) && levelCounts[0] > 0;
 
   let formula: string;
-  if (totalVideos === 0 || degradationCount === 0) {
+  if (randomMode) {
+    formula =
+      `${totalVideos} ${plural(totalVideos, 'video', 'videos')} x ` +
+      `${randomSets} random ${plural(randomSets, 'set', 'sets')} ` +
+      `(from ${degradationCount} ${plural(degradationCount, 'degradation', 'degradations')}) = ` +
+      `${tasks.length} outputs`;
+  } else if (totalVideos === 0 || degradationCount === 0) {
     formula = `${totalVideos} videos selected = ${tasks.length} outputs`;
   } else if (uniform && !wantCombined) {
     const k = levelCounts[0];

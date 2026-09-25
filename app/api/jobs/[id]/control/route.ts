@@ -35,6 +35,10 @@ export async function POST(
         job.resume();
         break;
 
+      case 'skip-thermal-rest':
+        job.skipThermalRest();
+        break;
+
       case 'cancel':
         job.cancel();
         break;
